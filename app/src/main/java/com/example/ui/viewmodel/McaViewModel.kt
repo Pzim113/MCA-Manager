@@ -19,6 +19,7 @@ import kotlinx.coroutines.launch
 
 enum class Screen {
     Home,
+    Addons,
     Settings
 }
 
@@ -460,6 +461,99 @@ class McaViewModel(application: Application) : AndroidViewModel(application) {
             e.printStackTrace()
         }
         return null
+    }
+
+    fun downloadFileToSelectedFolder(url: String, userAgent: String?, contentDisposition: String?, mimeType: String?) {
+        val folderUriStr = _storageFolderUri.value
+        if (folderUriStr == null) {
+            val ptMsg = "Por favor, selecione uma pasta de armazenamento nas Configurações primeiro!"
+            val enMsg = "Please select a storage folder in Settings first before downloading addons!"
+            showStatus(if (_currentLanguage.value == AppLanguage.PT) ptMsg else enMsg)
+            return
+        }
+
+        val folderUri = Uri.parse(folderUriStr)
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val suggestedFileName = android.webkit.URLUtil.guessFileName(url, contentDisposition, mimeType)
+                viewModelScope.launch(Dispatchers.Main) {
+                    val ptStart = "Iniciando download: $suggestedFileName"
+                    val enStart = "Starting download: $suggestedFileName"
+                    showStatus(if (_currentLanguage.value == AppLanguage.PT) ptStart else enStart)
+                }
+
+                val connection = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                connection.connectTimeout = 15000
+                connection.readTimeout = 15000
+                userAgent?.let { connection.setRequestProperty("User-Agent", it) }
+                
+                // Add cookies to download authenticate session if present
+                val cookies = android.webkit.CookieManager.getInstance().getCookie(url)
+                if (!cookies.isNullOrEmpty()) {
+                    connection.setRequestProperty("Cookie", cookies)
+                }
+                
+                connection.connect()
+
+                if (connection.responseCode in 200..299) {
+                    val parentDir = DocumentFile.fromTreeUri(context, folderUri)
+                    if (parentDir != null && parentDir.exists()) {
+                        val docFile = parentDir.createFile(mimeType ?: "application/octet-stream", suggestedFileName)
+                        if (docFile != null) {
+                            context.contentResolver.openOutputStream(docFile.uri)?.use { outputStream ->
+                                connection.inputStream.use { inputStream ->
+                                    inputStream.copyTo(outputStream)
+                                }
+                            }
+
+                            // Read details to register in DB so it shows up on the screen immediately
+                            val finalFileName = docFile.name ?: suggestedFileName
+                            val extension = finalFileName.substringAfterLast('.', "").lowercase()
+                            val size = docFile.length()
+                            val newMcFile = MinecraftFile(
+                                filePath = docFile.uri.toString(),
+                                name = finalFileName.substringBeforeLast("."),
+                                fileSize = size,
+                                fileType = extension,
+                                isDemo = false
+                            )
+                            repository.insertFile(newMcFile)
+
+                            viewModelScope.launch(Dispatchers.Main) {
+                                val ptSuccess = "Download concluído! Salvo com sucesso."
+                                val enSuccess = "Download complete! Saved to workspace folder."
+                                showStatus(if (_currentLanguage.value == AppLanguage.PT) ptSuccess else enSuccess)
+                            }
+                        } else {
+                            viewModelScope.launch(Dispatchers.Main) {
+                                val ptErr = "Falha ao gravar na pasta selecionada!"
+                                val enErr = "Failed to write file to selected workspace folder!"
+                                showStatus(if (_currentLanguage.value == AppLanguage.PT) ptErr else enErr)
+                            }
+                        }
+                    } else {
+                        viewModelScope.launch(Dispatchers.Main) {
+                            val ptFolderErr = "Pasta de armazenamento inválida nas configurações!"
+                            val enFolderErr = "Invalid workspace storage folder selected!"
+                            showStatus(if (_currentLanguage.value == AppLanguage.PT) ptFolderErr else enFolderErr)
+                        }
+                    }
+                } else {
+                    viewModelScope.launch(Dispatchers.Main) {
+                        val ptFail = "Erro no download: Código do servidor ${connection.responseCode}"
+                        val enFail = "Download failed: Server returned ${connection.responseCode}"
+                        showStatus(if (_currentLanguage.value == AppLanguage.PT) ptFail else enFail)
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                viewModelScope.launch(Dispatchers.Main) {
+                    val ptException = "Erro durante o download: ${e.localizedMessage}"
+                    val enException = "Download error: ${e.localizedMessage}"
+                    showStatus(if (_currentLanguage.value == AppLanguage.PT) ptException else enException)
+                }
+            }
+        }
     }
 
     fun showStatus(msg: String) {

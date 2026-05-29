@@ -45,6 +45,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.activity.compose.BackHandler
+import androidx.compose.ui.viewinterop.AndroidView
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.webkit.WebResourceRequest
 import com.example.data.entity.MinecraftFile
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.AppLanguage
@@ -55,6 +60,9 @@ import com.example.ui.viewmodel.Screen
 class Localization(val language: AppLanguage) {
     val appTitle: String get() = "MCA Manager"
     val filesTab: String get() = if (language == AppLanguage.PT) "Arquivos" else "Files"
+    val addonsTab: String get() = if (language == AppLanguage.PT) "Baixar" else "Get Addons"
+    val addonsTitle: String get() = if (language == AppLanguage.PT) "Obter Addons" else "Get Addons"
+    val addonsDesc: String get() = if (language == AppLanguage.PT) "Baixe complementos de fontes seguras direto para sua pasta de arquivos" else "Download packages from community sources straight to your workspace directory"
     val settingsTab: String get() = if (language == AppLanguage.PT) "Ajustes" else "Settings"
     val searchPlaceholder: String get() = if (language == AppLanguage.PT) "Buscar arquivos..." else "Search files..."
     val noFilesFound: String get() = if (language == AppLanguage.PT) "Nenhum arquivo Minecraft detectado" else "No matching Minecraft files"
@@ -167,6 +175,20 @@ fun MainAppScreen() {
                     modifier = Modifier.testTag("nav_home_tab")
                 )
                 NavigationBarItem(
+                    selected = currentScreen == Screen.Addons,
+                    onClick = { viewModel.setScreen(Screen.Addons) },
+                    icon = { Icon(Icons.Filled.Download, contentDescription = local.addonsTab) },
+                    label = { Text(local.addonsTab) },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = ObsidianBg,
+                        selectedTextColor = MinecraftGreen,
+                        indicatorColor = MinecraftGreen,
+                        unselectedIconColor = TextMuted,
+                        unselectedTextColor = TextMuted
+                    ),
+                    modifier = Modifier.testTag("nav_addons_tab")
+                )
+                NavigationBarItem(
                     selected = currentScreen == Screen.Settings,
                     onClick = { viewModel.setScreen(Screen.Settings) },
                     icon = { Icon(Icons.Filled.Settings, contentDescription = local.settingsTab) },
@@ -205,6 +227,10 @@ fun MainAppScreen() {
                         selectedFilePaths = selectedFilePaths,
                         local = local,
                         onTriggerPicker = { folderPickerLauncher.launch(null) }
+                    )
+                    Screen.Addons -> AddonsScreen(
+                        viewModel = viewModel,
+                        local = local
                     )
                     Screen.Settings -> SettingsScreen(
                         viewModel = viewModel,
@@ -1069,4 +1095,321 @@ fun formatFileSize(bytes: Long): String {
     val exp = (Math.log(bytes.toDouble()) / Math.log(1024.0)).toInt()
     val pre = "KMGTPE"[exp - 1]
     return String.format("%.1f %sB", bytes / Math.pow(1024.0, exp.toDouble()), pre)
+}
+
+@Composable
+fun AddonsScreen(
+    viewModel: McaViewModel,
+    local: Localization
+) {
+    var activeUrl by remember { mutableStateOf<String?>(null) }
+    var webViewRef by remember { mutableStateOf<WebView?>(null) }
+    var pageProgress by remember { mutableStateOf(100) }
+    var browserTitle by remember { mutableStateOf("") }
+
+    if (activeUrl != null) {
+        // WebView Browser Screen
+        BackHandler {
+            if (webViewRef?.canGoBack() == true) {
+                webViewRef?.goBack()
+            } else {
+                activeUrl = null
+            }
+        }
+
+        Column(
+            modifier = Modifier.fillMaxSize()
+        ) {
+            // Browser toolbar following modern design themes
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    onClick = { activeUrl = null },
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(ObsidianSurface)
+                        .border(1.dp, Color.White.copy(alpha = 0.05f), CircleShape)
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back",
+                        tint = Color.White
+                    )
+                }
+                
+                Spacer(modifier = Modifier.width(12.dp))
+                
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = browserTitle.ifEmpty { "Loading..." },
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = activeUrl ?: "",
+                        color = TextMuted,
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+                
+                // Navigation keys
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    IconButton(
+                        onClick = { webViewRef?.goBack() },
+                        enabled = webViewRef?.canGoBack() == true,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.ArrowBack,
+                            contentDescription = "Page Back",
+                            tint = if (webViewRef?.canGoBack() == true) MinecraftGreen else TextMuted
+                        )
+                    }
+                    IconButton(
+                        onClick = { webViewRef?.goForward() },
+                        enabled = webViewRef?.canGoForward() == true,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.ArrowForward,
+                            contentDescription = "Page Forward",
+                            tint = if (webViewRef?.canGoForward() == true) MinecraftGreen else TextMuted
+                        )
+                    }
+                    IconButton(
+                        onClick = { webViewRef?.reload() },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Refresh,
+                            contentDescription = "Reload",
+                            tint = MinecraftGreen
+                        )
+                    }
+                }
+            }
+
+            // Progress bar
+            AnimatedVisibility(visible = pageProgress < 100) {
+                LinearProgressIndicator(
+                    progress = { pageProgress / 100f },
+                    color = MinecraftGreen,
+                    trackColor = ObsidianSurface,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(3.dp)
+                )
+            }
+
+            // WebView wrapped beautifully inside Jetpack's AndroidView
+            val context = LocalContext.current
+            AndroidView(
+                factory = { ctx ->
+                    WebView(ctx).apply {
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.loadWithOverviewMode = true
+                        settings.useWideViewPort = true
+                        settings.databaseEnabled = true
+                        settings.allowFileAccess = true
+                        
+                        webViewClient = object : WebViewClient() {
+                            override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                                super.onPageStarted(view, url, favicon)
+                                url?.let { activeUrl = it }
+                            }
+                            override fun onPageFinished(view: WebView?, url: String?) {
+                                super.onPageFinished(view, url)
+                                url?.let { activeUrl = it }
+                                browserTitle = view?.title ?: ""
+                            }
+                            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                                request?.url?.let { view?.loadUrl(it.toString()) }
+                                return true
+                            }
+                        }
+                        
+                        webChromeClient = object : android.webkit.WebChromeClient() {
+                            override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                                pageProgress = newProgress
+                            }
+                        }
+
+                        setDownloadListener { url, userAgent, contentDisposition, mimetype, contentLength ->
+                            viewModel.downloadFileToSelectedFolder(url, userAgent, contentDisposition, mimetype)
+                        }
+
+                        loadUrl(activeUrl ?: "")
+                        webViewRef = this
+                    }
+                },
+                update = { webView ->
+                    if (webView.url != activeUrl) {
+                        activeUrl?.let { webView.loadUrl(it) }
+                    }
+                    webViewRef = webView
+                },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .weight(1f)
+                    .background(Color.White)
+            )
+        }
+    } else {
+        // Portal Selection Screen
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 24.dp)
+        ) {
+            Spacer(modifier = Modifier.height(28.dp))
+            Text(
+                text = local.addonsTitle,
+                color = Color.White,
+                fontSize = 24.sp,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = (-0.5).sp,
+                modifier = Modifier.testTag("addons_screen_title")
+            )
+            Text(
+                text = local.addonsDesc,
+                color = TextMuted,
+                fontSize = 13.sp,
+                lineHeight = 18.sp,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Scrollable list of 3 buttons
+            val scrollState = rememberScrollState()
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(scrollState),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                AddonSourceCard(
+                    title = "CurseForge Bedrock",
+                    subtitle = if (local.language == AppLanguage.PT) "Explore mods, complementos e mapas oficiais do Bedrock" else "Explore official Bedrock mods, addons, and templates",
+                    accentColor = Color(0xFFFF6B00),
+                    url = "https://www.curseforge.com/minecraft-bedrock",
+                    onClick = { activeUrl = "https://www.curseforge.com/minecraft-bedrock" }
+                )
+
+                AddonSourceCard(
+                    title = "MCPEDL.com",
+                    subtitle = if (local.language == AppLanguage.PT) "Busque mundos, skins, pacotes de texturas e comportamentos" else "Browse worlds, skins, behaviors, and custom resource packs",
+                    accentColor = MinecraftGreen,
+                    url = "https://mcpedl.com/",
+                    onClick = { activeUrl = "https://mcpedl.com/" }
+                )
+
+                AddonSourceCard(
+                    title = "Vatonage Addons",
+                    subtitle = if (local.language == AppLanguage.PT) "Instale sistemas de comportamentos e mecânicas premium da comunidade" else "Acquire premium-grade behavior scripts and mechanics",
+                    accentColor = Color(0xFFE91E63),
+                    url = "https://vatonage.com/",
+                    onClick = { activeUrl = "https://vatonage.com/" }
+                )
+                
+                Spacer(modifier = Modifier.height(100.dp))
+            }
+        }
+    }
+}
+
+@Composable
+fun AddonSourceCard(
+    title: String,
+    subtitle: String,
+    accentColor: Color,
+    url: String,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(
+                width = 1.dp,
+                color = accentColor.copy(alpha = 0.25f),
+                shape = RoundedCornerShape(24.dp)
+            )
+            .clickable(onClick = onClick)
+            .testTag("addon_source_card_${title.lowercase().replace(" ", "_")}"),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = ObsidianSurface)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Modern Visual Indicator Dot representing company branding accent colors
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(accentColor.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Language,
+                    contentDescription = null,
+                    tint = accentColor,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.width(18.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = title,
+                        color = Color.White,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Icon(
+                        imageVector = Icons.Filled.ArrowForward,
+                        contentDescription = null,
+                        tint = accentColor.copy(alpha = 0.6f),
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = subtitle,
+                    color = TextSecondary,
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = url,
+                    color = accentColor.copy(alpha = 0.8f),
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    letterSpacing = (-0.2).sp
+                )
+            }
+        }
+    }
 }
