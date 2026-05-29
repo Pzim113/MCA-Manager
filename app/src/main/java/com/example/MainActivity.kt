@@ -14,7 +14,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -60,13 +62,13 @@ class Localization(val language: AppLanguage) {
     val selectFolderTip: String get() = if (language == AppLanguage.PT) 
         "Toque no botão abaixo para selecionar a pasta de download ou games e ler arquivos .mcaddon, .mcpack, etc." 
         else "Tap the button below to pick your downloads or games directory and index custom packs immediately."
-    val exportSelected: String get() = if (language == AppLanguage.PT) "Exportar p/ Minecraft" else "Export to Minecraft"
+    val exportSelected: String get() = if (language == AppLanguage.PT) "Abrir com o Minecraft" else "Open with Minecraft"
     val fileTypeAll: String get() = if (language == AppLanguage.PT) "Todos" else "All"
     val itemsSelectedOne: String get() = if (language == AppLanguage.PT) "selecionado" else "selected"
     val itemsSelectedMore: String get() = if (language == AppLanguage.PT) "selecionados" else "selected"
     val selectAll: String get() = if (language == AppLanguage.PT) "Selecionar Tudo" else "Select All"
     val deselectAll: String get() = if (language == AppLanguage.PT) "Limpar Seleção" else "Deselect All"
-    val fileInfoLabel: String get() = if (language == AppLanguage.PT) "Exportado" else "Imported"
+    val fileInfoLabel: String get() = if (language == AppLanguage.PT) "Aberto" else "Opened"
     val demoLabel: String get() = if (language == AppLanguage.PT) "SAMP" else "DEMO"
     
     // Settings translations
@@ -75,14 +77,14 @@ class Localization(val language: AppLanguage) {
     val settingsLanguageDesc: String get() = if (language == AppLanguage.PT) "Alternar entre Inglês e Português" else "Switch between English and Portuguese"
     val settingsStorageTitle: String get() = if (language == AppLanguage.PT) "Diretório de Armazenamento" else "Storage Directory"
     val settingsStorageDesc: String get() = if (language == AppLanguage.PT) "Pasta selecionada para leitura rápida" else "Directory selected for scanning content"
-    val settingsStorageNotSet: String get() = if (language == AppLanguage.PT) "Nenhum diretório selecionado (Utilizando Sandbox)" else "Using demo Sandbox (No directory connected)"
+    val settingsStorageNotSet: String get() = if (language == AppLanguage.PT) "Nenhum diretório conectado" else "No directory connected"
     val settingsMinecraftTitle: String get() = if (language == AppLanguage.PT) "Minecraft Bedrock" else "Minecraft Bedrock Status"
     val settingsMinecraftDoc: String get() = if (language == AppLanguage.PT) "Verificar se o jogo oficial está instalado" else "Scan if the official game is installed"
     val settingsMinecraftDetected: String get() = if (language == AppLanguage.PT) "Minecraft Detectado" else "Minecraft Detected"
-    val settingsMinecraftNotDetected: String get() = if (language == AppLanguage.PT) "Minecraft Não Detectado (Toque p/ testar)" else "Minecraft Not Detected (Tap to scan)"
+    val settingsMinecraftNotDetected: String get() = if (language == AppLanguage.PT) "Minecraft Não Detectado (Toque p/ verificar)" else "Minecraft Not Detected (Tap to verify)"
     val settingsAppInfoTitle: String get() = if (language == AppLanguage.PT) "Informações do Sistema" else "System Information"
     val settingsAppInfoDesc: String get() = if (language == AppLanguage.PT) "Sobre, versão, termos e criadores" else "About, version, licenses, and creators"
-    val resetStorageButton: String get() = if (language == AppLanguage.PT) "Restaurar Sandbox" else "Reset to Sandbox"
+    val resetStorageButton: String get() = if (language == AppLanguage.PT) "Limpar Pasta" else "Clear Folder"
     
     // About Dialog
     val aboutTitle: String get() = if (language == AppLanguage.PT) "Sobre o MCA Manager" else "About MCA Manager"
@@ -252,18 +254,6 @@ fun HomeScreen(
         ) {
             if (!isSearchExpanded) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    // Small glowing grass block indicator
-                    Box(
-                        modifier = Modifier
-                            .size(32.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(
-                                Brush.verticalGradient(
-                                    listOf(MinecraftGreen, MinecraftGreenVariant)
-                                )
-                            )
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
                     Column {
                         Text(
                             text = local.appTitle,
@@ -503,57 +493,55 @@ fun HomeScreen(
         }
     }
 
-    // Floating morph action button at the bottom
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        contentAlignment = Alignment.BottomCenter
-    ) {
-        val hasSelection = selectedFilePaths.isNotEmpty()
-        Button(
-            onClick = {
-                if (hasSelection) {
-                    viewModel.exportSelectedFiles()
-                } else {
-                    onTriggerPicker()
-                }
-            },
-            colors = ButtonDefaults.buttonColors(
-                containerColor = if (hasSelection) MinecraftGreen else ObsidianSurfaceVariant,
-                contentColor = if (hasSelection) ObsidianBg else TextPrimary
-            ),
-            elevation = ButtonDefaults.buttonElevation(defaultElevation = 10.dp),
-            contentPadding = PaddingValues(horizontal = 24.dp),
+    // Floating action button at the bottom - only visible when files are selected
+    val hasSelection = selectedFilePaths.isNotEmpty()
+    if (hasSelection) {
+        Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .height(64.dp)
-                .clip(RoundedCornerShape(32.dp))
-                .border(
-                    width = 1.dp,
-                    color = if (hasSelection) MinecraftGreen.copy(alpha = 0.5f) else Color.White.copy(alpha = 0.05f),
-                    shape = RoundedCornerShape(32.dp)
-                )
-                .testTag("large_action_button")
+                .fillMaxSize()
+                .padding(24.dp),
+            contentAlignment = Alignment.BottomCenter
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center
+            Button(
+                onClick = {
+                    viewModel.exportSelectedFiles()
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MinecraftGreen,
+                    contentColor = ObsidianBg
+                ),
+                elevation = ButtonDefaults.buttonElevation(defaultElevation = 10.dp),
+                contentPadding = PaddingValues(horizontal = 24.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(64.dp)
+                    .clip(RoundedCornerShape(32.dp))
+                    .border(
+                        width = 1.dp,
+                        color = MinecraftGreen.copy(alpha = 0.5f),
+                        shape = RoundedCornerShape(32.dp)
+                    )
+                    .testTag("large_action_button")
             ) {
-                Icon(
-                    imageVector = if (hasSelection) Icons.Filled.Share else Icons.Filled.FolderOpen,
-                    contentDescription = null,
-                    tint = if (hasSelection) ObsidianBg else MinecraftGreen,
-                    modifier = Modifier.size(24.dp)
-                )
-                Spacer(modifier = Modifier.width(12.dp))
-                Text(
-                    text = (if (hasSelection) "${local.exportSelected} (${selectedFilePaths.size})" else local.scanButton).uppercase(),
-                    color = if (hasSelection) ObsidianBg else TextPrimary,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 0.8.sp
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.DriveFileMove,
+                        contentDescription = null,
+                        tint = ObsidianBg,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text(
+                        text = "${local.exportSelected} (${selectedFilePaths.size})".uppercase(),
+                        color = ObsidianBg,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.8.sp
+                    )
+                }
             }
         }
     }
@@ -866,7 +854,7 @@ fun SettingsScreen(
                 }
                 if (storageFolderUri != null) {
                     Button(
-                        onClick = { viewModel.clearFolderAndResetDemo() },
+                        onClick = { viewModel.clearFolderAndReset() },
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.buttonColors(containerColor = RedstoneRed),
                         shape = RoundedCornerShape(14.dp)
@@ -909,13 +897,14 @@ fun SettingsScreen(
                     modifier = Modifier.size(24.dp)
                 )
                 Spacer(modifier = Modifier.width(12.dp))
-                Text(
-                    text = if (minecraftInstalled) local.settingsMinecraftDetected else local.settingsMinecraftNotDetected,
-                    color = if (minecraftInstalled) MinecraftGreen else TextPrimary,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.weight(1f)
-                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (minecraftInstalled) local.settingsMinecraftDetected else local.settingsMinecraftNotDetected,
+                        color = if (minecraftInstalled) MinecraftGreen else TextPrimary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
                 Button(
                     onClick = {
                         viewModel.checkMinecraftInstallation()
@@ -961,6 +950,14 @@ fun SettingsScreen(
                     )
                 }
             }
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                text = "Made by Lua Creative 🌙",
+                color = GoldYellow.copy(alpha = 0.9f),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.align(Alignment.CenterHorizontally)
+            )
         }
 
         Spacer(modifier = Modifier.height(100.dp))
@@ -1039,6 +1036,12 @@ fun AppInfoDialog(
                     lineHeight = 18.sp
                 )
                 Divider(color = ObsidianSurfaceVariant, thickness = 1.dp)
+                Text(
+                    text = "Made by Lua Creative 🌙",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = GoldYellow
+                )
                 Text(
                     text = local.aboutCredits,
                     fontSize = 12.sp,

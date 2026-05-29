@@ -8,9 +8,12 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.documentfile.provider.DocumentFile
+import androidx.core.content.FileProvider
 import com.example.data.database.AppDatabase
 import com.example.data.entity.MinecraftFile
 import com.example.data.repository.MinecraftFileRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
@@ -93,15 +96,11 @@ class McaViewModel(application: Application) : AndroidViewModel(application) {
             val savedFolder = repository.getSetting("storage_folder")
             _storageFolderUri.value = savedFolder
 
-            // Check if Minecraft package is installed
+            // Check if Minecraft package is installed and active
             checkMinecraftInstallation()
 
-            // Pre-populate Database with beautiful curated demo items on very first run
-            repository.allFiles.first().let { currentList ->
-                if (currentList.isEmpty()) {
-                    repository.prepopulateDemoFiles()
-                }
-            }
+            // Remove demonstration files on first run so the workspace starts clean
+            repository.deleteDemoFiles()
         }
     }
 
@@ -166,6 +165,12 @@ class McaViewModel(application: Application) : AndroidViewModel(application) {
 
     // --- Folder Scanning Callback ---
     fun updateStorageFolder(uri: Uri) {
+        try {
+            val takeFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            context.contentResolver.takePersistableUriPermission(uri, takeFlags)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
         _storageFolderUri.value = uri.toString()
         viewModelScope.launch {
             repository.saveSetting("storage_folder", uri.toString())
@@ -174,27 +179,34 @@ class McaViewModel(application: Application) : AndroidViewModel(application) {
             // Remove demo files when user connects their actual directory so they only see their files!
             repository.deleteDemoFiles()
             
-            val scanned = repository.scanFolder(context, uri)
-            _statusMessage.value = "Found ${scanned.size} Minecraft compatible files!"
+            try {
+                val scanned = repository.scanFolder(context, uri)
+                _statusMessage.value = if (_currentLanguage.value == AppLanguage.PT) {
+                    "Encontrado ${scanned.size} arquivos compatíveis!"
+                } else {
+                    "Found ${scanned.size} Minecraft compatible files!"
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                _statusMessage.value = if (_currentLanguage.value == AppLanguage.PT) "Erro ao ler a pasta!" else "Error reading folder!"
+            }
         }
     }
 
-    // --- Clear dynamic scanning and restore demo files ---
-    fun clearFolderAndResetDemo() {
+    // --- Clear dynamic scanning and settings ---
+    fun clearFolderAndReset() {
         viewModelScope.launch {
             _storageFolderUri.value = null
             repository.removeSetting("storage_folder")
             repository.clearAllFiles()
-            repository.prepopulateDemoFiles()
-            showStatus("Database reset to showcase demo files.")
+            showStatus(if (_currentLanguage.value == AppLanguage.PT) "Workspace limpo com sucesso!" else "Workspace cleared successfully!")
         }
     }
 
-    // --- Check Minecraft Bedrock installation ---
+    // --- Check Minecraft Bedrock installation and active files/cache ---
     fun checkMinecraftInstallation() {
         viewModelScope.launch {
             val pm = context.packageManager
-            // Common Minecraft package IDs
             val mcPackages = listOf(
                 "com.mojang.minecraftpe",
                 "com.mojang.minecraftpe.playpass"
@@ -209,6 +221,15 @@ class McaViewModel(application: Application) : AndroidViewModel(application) {
                     // Not found, check next
                 }
             }
+            if (!detected) {
+                val checkPaths = listOf(
+                    "/storage/emulated/0/games/com.mojang",
+                    "/sdcard/games/com.mojang",
+                    "/storage/emulated/0/Android/data/com.mojang.minecraftpe/files/games/com.mojang",
+                    "/storage/emulated/0/Android/data/com.mojang.minecraftpe/cache"
+                )
+                detected = checkPaths.any { java.io.File(it).exists() }
+            }
             _minecraftInstalled.value = detected
         }
     }
@@ -218,7 +239,6 @@ class McaViewModel(application: Application) : AndroidViewModel(application) {
         _showAppInfoDialog.value = visible
     }
 
-    // --- Export files dynamically to Minecraft Bedrock ---
     fun exportSelectedFiles() {
         val selectedPaths = _selectedFilePaths.value
         if (selectedPaths.isEmpty()) {
@@ -227,106 +247,219 @@ class McaViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         viewModelScope.launch {
-            // Find files details
             val allFilesNow = files.value
             val targetFiles = allFilesNow.filter { selectedPaths.contains(it.filePath) }
-            
-            if (targetFiles.size == 1) {
-                exportSingleFileToMinecraft(targetFiles.first())
-            } else if (targetFiles.isNotEmpty()) {
-                // Bulk export / share to avoid spawning multiple parallel chooser activities
-                targetFiles.forEach { repository.updateImported(it.filePath, true) }
-                checkMinecraftInstallation()
-
-                val intent = Intent().apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
-                }
-
-                val hasRealFiles = targetFiles.any { !it.isDemo }
-                if (hasRealFiles) {
-                    intent.action = Intent.ACTION_SEND_MULTIPLE
-                    intent.type = "application/octet-stream"
-                    val uris = ArrayList<Uri>()
-                    targetFiles.forEach {
-                        if (!it.isDemo) {
-                            try {
-                                uris.add(Uri.parse(it.filePath))
-                            } catch (e: Exception) {}
-                        }
-                    }
-                    intent.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
-                } else {
-                    intent.action = Intent.ACTION_SEND
-                    intent.type = "text/plain"
-                    val textBuilder = StringBuilder("Importing multiple packs to Minecraft:\n")
-                    targetFiles.forEach {
-                        textBuilder.append("- ${it.name}.${it.fileType} (${it.fileSize} bytes)\n")
-                    }
-                    intent.putExtra(Intent.EXTRA_SUBJECT, "MCA Manager Bulk Export")
-                    intent.putExtra(Intent.EXTRA_TEXT, textBuilder.toString())
-                }
-
-                try {
-                    val chooser = Intent.createChooser(intent, "Export packs to Minecraft")
-                    chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    context.startActivity(chooser)
-                } catch (e: Exception) {
-                    Toast.makeText(context, "Direct import unavailable on empty simulator.", Toast.LENGTH_SHORT).show()
-                }
+            if (targetFiles.isNotEmpty()) {
+                openFilesWithMinecraft(targetFiles)
             }
-            
-            clearSelection()
-            showStatus(if (_currentLanguage.value == AppLanguage.PT) "Exportação concluída!" else "Export completed successfully!")
         }
     }
 
     fun exportSingleFileToMinecraft(file: MinecraftFile) {
-        viewModelScope.launch {
-            // Mark as imported in db
-            repository.updateImported(file.filePath, true)
-            
-            // Re-check installation to support dynamic detections
+        openFilesWithMinecraft(listOf(file))
+    }
+
+    // Direct Import with Minecraft (Action View Trigger - like ZArchiver/Quick Search/Files)
+    fun openFilesWithMinecraft(filesToOpen: List<MinecraftFile>) {
+        viewModelScope.launch(Dispatchers.IO) {
             checkMinecraftInstallation()
-
-            // Actual Android Open Intent implementation using sharing/view action
-            // Standard action for Minecraft file extensions is INTENT ACTION_VIEW with application/octet-stream or custom mime-type
+            
+            // Create a dedicated cache subdirectory and clear old exported temp files to save space
+            val cacheParent = java.io.File(context.cacheDir, "temp_mc_exports")
             try {
-                val intent = Intent(Intent.ACTION_SEND).apply {
-                    type = "application/octet-stream"
-                    putExtra(Intent.EXTRA_TITLE, "${file.name}.${file.fileType}")
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+                if (cacheParent.exists()) {
+                    cacheParent.deleteRecursively()
                 }
-                
-                if (file.isDemo) {
-                    // For demo placeholders, we share a friendly text stream or link to Minecraft schemas
-                    intent.setAction(Intent.ACTION_SEND)
-                    intent.type = "text/plain"
-                    intent.putExtra(Intent.EXTRA_SUBJECT, "MCA Manager Export")
-                    intent.putExtra(Intent.EXTRA_TEXT, "Importing ${file.name}.${file.fileType} to Minecraft. Size: ${file.fileSize} bytes.")
-                } else {
-                    // For actual local files, use the real URI
-                    try {
-                        val fileUri = Uri.parse(file.filePath)
-                        intent.putExtra(Intent.EXTRA_STREAM, fileUri)
-                        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    } catch (e: Exception) {
-                        // Fallback Text if Uri parsing failed
-                        intent.setAction(Intent.ACTION_SEND)
-                        intent.type = "text/plain"
-                        intent.putExtra(Intent.EXTRA_TEXT, "File URI: ${file.filePath}")
-                    }
-                }
-
-                // Create chooser
-                val chooser = Intent.createChooser(intent, "Open with Minecraft Bedrock")
-                chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                context.startActivity(chooser)
-                
+                cacheParent.mkdirs()
             } catch (e: Exception) {
-                // If sharing failed, fallback to Toast
-                Toast.makeText(context, "Direct import unavailable on empty simulator. Launching system chooser.", Toast.LENGTH_SHORT).show()
+                e.printStackTrace()
+            }
+            
+            var openedCount = 0
+            
+            filesToOpen.forEachIndexed { index, file ->
+                repository.updateImported(file.filePath, true)
+                
+                // Keep backup copy in user's Downloads directory
+                copyFileToDownloads(file)
+                
+                try {
+                    val fileNameWithExt = "${file.name}.${file.fileType}"
+                    val tempFile = java.io.File(cacheParent, fileNameWithExt)
+                    
+                    var copySuccess = false
+                    if (file.isDemo) {
+                        try {
+                            tempFile.outputStream().use { output ->
+                                // Write dummy text to emulate a real MC file
+                                output.write("MC_PORTER_DUMMY_DATA_BY_LUA_CREATIVE_FOR_TESTING".toByteArray())
+                                copySuccess = true
+                            }
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    } else {
+                        val sourceUri = Uri.parse(file.filePath)
+                        try {
+                            context.contentResolver.openInputStream(sourceUri)?.use { input ->
+                                tempFile.outputStream().use { output ->
+                                    input.copyTo(output)
+                                    copySuccess = true
+                                }
+                            }
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    }
+                    
+                    if (copySuccess && tempFile.exists()) {
+                        val contentUri = FileProvider.getUriForFile(
+                            context,
+                            "com.example.fileprovider",
+                            tempFile
+                        )
+                        
+                        // Action View intent with mimetype and file provider uri
+                        val intent = Intent(Intent.ACTION_VIEW).apply {
+                            setDataAndType(contentUri, "application/octet-stream")
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        
+                        // Proactively grant read permission to standard Minecraft packages to be safe
+                        val mcPackages = listOf(
+                            "com.mojang.minecraftpe",
+                            "com.mojang.minecraftpe.playpass",
+                            "com.mojang.minecraftedu"
+                        )
+                        mcPackages.forEach { pkg ->
+                            try {
+                                context.grantUriPermission(pkg, contentUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            } catch (ex: Exception) {
+                                ex.printStackTrace()
+                            }
+                        }
+
+                        // Proactively query and grant read permission to other matching apps (like ZArchiver etc.)
+                        try {
+                            val pm = context.packageManager
+                            val resolveInfos = pm.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY)
+                            for (resolveInfo in resolveInfos) {
+                                val packageName = resolveInfo.activityInfo.packageName
+                                try {
+                                    context.grantUriPermission(packageName, contentUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                } catch (ex: Exception) {
+                                    ex.printStackTrace()
+                                }
+                            }
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+
+                        // Always present the standard system app chooser with appropriate title, exactly like MCPEDL
+                        val chooserTitle = if (_currentLanguage.value == AppLanguage.PT) {
+                            "Abrir com o Minecraft"
+                        } else {
+                            "Open with Minecraft"
+                        }
+                        
+                        val chooser = Intent.createChooser(intent, chooserTitle).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        context.startActivity(chooser)
+                        
+                        openedCount++
+                        
+                        // Sequential launch delay to allow Minecraft to handle independent import triggers
+                        if (filesToOpen.size > 1 && index < filesToOpen.size - 1) {
+                            kotlinx.coroutines.delay(1500)
+                        }
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+            
+            viewModelScope.launch(Dispatchers.Main) {
+                val feedback = if (_currentLanguage.value == AppLanguage.PT) {
+                    "Selecione o Minecraft na lista para fazer a importação!"
+                } else {
+                    "Choose Minecraft from the list to import the file!"
+                }
+                showStatus(feedback)
+                clearSelection()
             }
         }
+    }
+
+    private fun copyFileToDownloads(file: MinecraftFile): Uri? {
+        val fileNameWithExt = "${file.name}.${file.fileType}"
+        val resolver = context.contentResolver
+        
+        // Android 10+ (Q+) using robust MediaStore Downloads API
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            val contentValues = android.content.ContentValues().apply {
+                put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, fileNameWithExt)
+                put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "application/octet-stream")
+                put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
+            }
+            
+            val containerUri = android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI
+            try {
+                // Delete existing entry if any to avoid duplicated clutter on multi-tries
+                try {
+                    val selection = "${android.provider.MediaStore.MediaColumns.DISPLAY_NAME} = ?"
+                    val selectionArgs = arrayOf(fileNameWithExt)
+                    resolver.delete(containerUri, selection, selectionArgs)
+                } catch (e: Exception) {}
+                
+                val insertedUri = resolver.insert(containerUri, contentValues)
+                if (insertedUri != null) {
+                    resolver.openOutputStream(insertedUri)?.use { output ->
+                        if (file.isDemo) {
+                            output.write("MC_PORTER_DUMMY_DATA_BY_LUA_CREATIVE_FOR_TESTING".toByteArray())
+                        } else {
+                            val sourceUri = Uri.parse(file.filePath)
+                            resolver.openInputStream(sourceUri)?.use { input ->
+                                input.copyTo(output)
+                            }
+                        }
+                    }
+                    return insertedUri
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+        
+        // Legacy file direct system fallback
+        try {
+            val downloadsDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+            if (!downloadsDir.exists()) {
+                downloadsDir.mkdirs()
+            }
+            val targetFile = java.io.File(downloadsDir, fileNameWithExt)
+            if (targetFile.exists()) {
+                targetFile.delete()
+            }
+            targetFile.outputStream().use { output ->
+                if (file.isDemo) {
+                    output.write("MC_PORTER_DUMMY_DATA_BY_LUA_CREATIVE_FOR_TESTING".toByteArray())
+                } else {
+                    val sourceUri = Uri.parse(file.filePath)
+                    resolver.openInputStream(sourceUri)?.use { input ->
+                        input.copyTo(output)
+                    }
+                }
+            }
+            return FileProvider.getUriForFile(
+                context,
+                "com.example.fileprovider",
+                targetFile
+            )
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return null
     }
 
     fun showStatus(msg: String) {
