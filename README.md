@@ -6,7 +6,7 @@ MCA Manager is a file manager for Minecraft Bedrock Edition.
 - Import .mcpack files
 - Import .mcaddon files
 - Import .mcworld files
-  Direct to Minecraft
+ - Direct to Minecraft
 - Links to many free Marketplaces alternatives
 - Manage Minecraft addons files
 
