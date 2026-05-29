@@ -1,0 +1,6 @@
+{
+  "name": "MCA Manager",
+  "description": "Organize, manage, and import Minecraft Bedrock Edition files like addons, world packs, and structures.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
