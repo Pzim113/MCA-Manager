@@ -1,21 +1,16 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# MCA Manager
 
-# Run and deploy your AI Studio app
+MCA Manager is a file manager for Minecraft Bedrock Edition.
 
-This contains everything you need to run your app locally.
+## Features
+- Import .mcpack files
+- Import .mcaddon files
+- Import .mcworld files
+  Direct to Minecraft
+- Links to many free Marketplaces alternatives
+- Manage Minecraft addons files
 
-View your app in AI Studio: https://ai.studio/apps/038dee0d-a4d9-4bec-bedb-2387b851c672
+## About
+MCA Manager helps players install Minecraft addons, worlds, and resource packs quickly and easily.
 
-## Run Locally
-
-**Prerequisites:**  [Android Studio](https://developer.android.com/studio)
-
-
-1. Open Android Studio
-2. Select **Open** and choose the directory containing this project
-3. Allow Android Studio to fix any incompatibilities as it imports the project.
-4. Create a file named `.env` in the project directory and set `GEMINI_API_KEY` in that file to your Gemini API key (see `.env.example` for an example)
-5. Remove this line from the app's `build.gradle.kts` file: `signingConfig = signingConfigs.getByName("debugConfig")`
-6. Run the app on an emulator or physical device
+Developed by Lua Creative.
